@@ -1,0 +1,81 @@
+#TODO：修改主机IP、命名空间、通知邮箱
+
+def config = [
+            "kSkip"            : false,             // 是否跳过kubernetes部署
+            "kSshServer"       : "172.17.250.116",  // 可以是任何能使用kubectl操作kubernetes的主机IP
+            "kSshCredentialsId": "local-cluster",   // Jenkins中配置的kubernetes操作主机的Credentials
+            "kConfigs"         : "kubernetes/*.yaml", // kubernetes的配置文件
+            "kNamespace"       : "ai",        // kubernetes部署的命名空间
+            "tagBuildNum"      : true,              // 是否在Git中打上Jenkins的Build Num标签
+            "notifyEmail"      : "wushizhi@jianke.com,linyurong@jianke.com"                 // 通知邮箱
+    ]
+
+def name
+def image
+def imageTag
+
+node {
+    try {
+        stage('Checkout') { // for display purposes
+            checkout scm
+            name = "${env.JOB_NAME}"
+        }
+
+        //if (fileExists("Dockerfile")) {
+
+            stage('Build Image') {
+                image = docker.build("library/${name}")
+                imageTag = "${env.BUILD_NUMBER}"
+            }
+
+            stage('Push Image') {
+                docker.withRegistry("https://registry.jianke.com/", 'docker-registry') {
+                    image.push("${imageTag}")
+                }
+            }
+
+            if (!config.kSkip) {
+                stage('Deploy to Kubernetes') {
+                    env.NAMESPACE = config.kNamespace
+                    env.IMAGE_TAG = imageTag
+
+                    kubernetesDeploy(
+                            credentialsType: 'SSH',
+                            ssh: [sshCredentialsId: "${config.kSshCredentialsId}", sshServer: "${config.kSshServer}"],
+                            configs: "${config.kConfigs}"
+                    )
+                }
+            }
+        //}
+
+        if (config.tagBuildNum) {
+            stage('Tag Build') {
+                def tagName = "BUILD${env.BUILD_NUMBER}"
+
+                sh "git tag ${tagName} && git push origin ${tagName}"
+            }
+        }
+
+        if (config.notifyEmail != null && config.notifyEmail != "") {
+            if (fileExists("Dockerfile")) {
+                stage('Notify Success') {
+                    emailext attachLog: false, body: "Python项目构建成功: <br>构建项目: ${env.JOB_NAME} <br>构建版本号: ${env.BUILD_NUMBER} <br> 构建地址: ${env.BUILD_URL} <br> 构建镜像: https://registry.jianke.com/${image.id}:${imageTag} <br>", mimeType: "text/html", subject: "[JENKINS] 构建成功: Project name -> ${env.JOB_NAME}", to: "${config.notifyEmail}"
+                }
+            } else {
+                stage('Notify Success') {
+                    emailext attachLog: false, body: "Python项目构建成功: <br>构建项目: ${env.JOB_NAME} <br>构建版本号: ${env.BUILD_NUMBER} <br> 构建地址: ${env.BUILD_URL} <br>", mimeType: "text/html", subject: "[JENKINS] 构建成功: Project name -> ${env.JOB_NAME}", to: "${config.notifyEmail}"
+                }
+            }
+        }
+
+
+    } catch (e) {
+        stage('Notify Error') {
+
+            if (config.notifyEmail != null && config.notifyEmail != "") {
+                String error = "${e}";
+                emailext attachLog: false, body: "Python项目构建异常: ${error}\n\n<br>构建项目: ${env.JOB_NAME} <br>构建版本号: ${env.BUILD_NUMBER} <br> 构建地址: ${env.BUILD_URL}", mimeType: "text/html", subject: "[JENKINS] 构建异常: Project name -> ${env.JOB_NAME}", to: "${config.notifyEmail}"
+            }
+        }
+    }
+}

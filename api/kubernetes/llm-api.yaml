@@ -1,0 +1,70 @@
+#TODO:改文件名、namespace、镜像地址、host、servicePort
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-api
+  namespace: $NAMESPACE
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      run: llm-api
+  template:
+    metadata:
+      labels:
+        run: llm-api
+    spec:
+      volumes:
+        - name: data-resources
+          hostPath:
+            path: /data/kube_data/llm/data-resources
+      containers:
+      - name: llm-api
+        image: registry.jianke.com/library/llm-api:$IMAGE_TAG
+        imagePullPolicy: Always
+        volumeMounts:
+          - mountPath: /app/models
+            name: data-resources
+        ports:
+        - containerPort: 5000
+        resources:
+          requests:
+            memory: "2048Mi"
+          limits:
+            memory: "2048Mi"
+        env:
+          - name: CONFIGSERVER_ADDRESS
+            value: "http://ai-config-service.dev.jianke.com"
+          - name: PROFILE
+            value: "dev"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-api
+  namespace: $NAMESPACE
+  labels:
+    run: llm-api
+spec:
+  ports:
+  - port: 5000
+    protocol: TCP
+    name: http
+  selector:
+    run: llm-api
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: llm-api
+  namespace: $NAMESPACE
+spec:
+  rules:
+  - host: llm-api.dev.jianke.com
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: llm-api
+          servicePort: 5000
